@@ -1,4 +1,6 @@
 # Job Queue ![visitors](https://visitor-badge.laobi.icu/badge?page_id=harshalvk.job-queue&left_text=visitors&left_color=%234f4f4f&right_color=%23c48312)
+<img width="3000" height="1000" alt="image" src="https://github.com/user-attachments/assets/9bdd9b71-83dd-496a-93fe-f5d33de1f835" />
+
 A distributed job queue built from scratch in Go — a mini Sidekiq/Celery, without reaching for an off-the-shelf framework. The goal is to actually understand the primitives (worker pools, retries, dead-lettering, backoff) rather than just importing a library that hides them.
 
 Backed by Redis for the hot queue, with Postgres planned for durable job history.
