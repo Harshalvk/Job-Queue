@@ -1,4 +1,5 @@
 # Job Queue ![visitors](https://visitor-badge.laobi.icu/badge?page_id=harshalvk.job-queue&left_text=visitors&left_color=%234f4f4f&right_color=%23c48312)
+
 <img width="3000" height="1000" alt="image" src="https://github.com/user-attachments/assets/9bdd9b71-83dd-496a-93fe-f5d33de1f835" />
 
 A distributed job queue built from scratch in Go — a mini Sidekiq/Celery, without reaching for an off-the-shelf framework. The goal is to actually understand the primitives (worker pools, retries, dead-lettering, backoff) rather than just importing a library that hides them.
@@ -24,40 +25,37 @@ jobqueue/
 └── README.md
 ```
 
-## Steps completed so far
+## Supported features
 
-### Step 1 — Core domain model
-Defined the `Job` struct: `ID` (UUID), `Type`, `Payload` (raw JSON so the queue stays agnostic to job contents), `Status`, `Attempts`/`MaxAttempts`, timestamps, and `LastError`. This struct is the shared contract every other component (queue, worker pool, retries, dead-letter) builds against, so they never drift out of sync with each other.
+### 1. Core job model
+
+UUID-based `Job` struct with `Type`, `Payload` (raw JSON, so the queue stays agnostic to job contents), `Status`, `Attempts`/`MaxAttempts`, timestamps, and `LastError`. This struct is the shared contract every other component (queue, worker pool, retries, dead-letter) builds against, so they never drift out of sync with each other.
 
 **Why UUIDs:** no coordination needed between multiple producers or worker nodes — any process can generate a valid job ID locally.
 
-### Step 2 — Redis-backed queue
-Implemented `Enqueue`/`Dequeue` using Redis `LPUSH`/`BRPOP` against a list. `BRPOP` blocks until a job is available — no polling loop burning CPU while the queue is empty.
+### 2. Redis-backed queue
+
+`Enqueue`/`Dequeue` implemented using Redis `LPUSH`/`BRPOP` against a list. `BRPOP` blocks until a job is available — no polling loop burning CPU while the queue is empty.
 
 **Why a list and not Streams (yet):** starting with the simplest primitive that works means understanding exactly what's traded away before reaching for something more complex like Redis Streams (which offer consumer groups and replay — relevant once this goes multi-node).
 
-### Step 3 — Worker pool
+### 3. Worker pool
+
 A fixed number of goroutines (`concurrency`), each looping forever, pulling jobs and routing them to a registered `Handler` based on `job.Type`. Uses `context.Context` + `sync.WaitGroup` for coordinated shutdown, and a 5-second `BRPOP` timeout (rather than blocking forever) so workers can periodically check if they've been asked to stop.
 
 **Why a fixed pool and not one goroutine per job:** caps how much work happens in parallel, protecting downstream resources (databases, external APIs) from being overwhelmed if a burst of jobs land at once.
 
-### Step 4 — Retries with exponential backoff
+### 4. Retries with exponential backoff
+
 On handler failure, `Attempts` increments and the job is either requeued after a backoff delay (`2^attempts` seconds, capped at 30s) or moved to the dead-letter queue if `MaxAttempts` is exhausted.
 
-**Known limitation (called out intentionally):** the current retry delay uses an in-memory goroutine (`time.After`), which means a crashed worker process loses any pending retries. This gets fixed properly in Step 6 using a Redis sorted set for durable, crash-safe scheduling.
+**Known limitation (called out intentionally):** the current retry delay uses an in-memory goroutine (`time.After`), which means a crashed worker process loses any pending retries. This gets fixed properly using a Redis sorted set for durable, crash-safe scheduling (see roadmap).
 
-### Step 5 — Dead-letter queue
-Permanently-failed jobs move to a separate Redis list (`jobqueue:dead_letter`) instead of just being logged and dropped. Added `ListDeadLetter` (inspect without removing), `RequeueDeadLetter` (reset attempts and retry), and `PurgeDeadLetter` (delete all), plus a small CLI (`cmd/deadletter`) to drive these manually.
+### 5. Dead-letter queue
+
+Permanently-failed jobs move to a separate Redis list (`jobqueue:dead_letter`) instead of just being logged and dropped. Includes `ListDeadLetter` (inspect without removing), `RequeueDeadLetter` (reset attempts and retry), and `PurgeDeadLetter` (delete all), plus a small CLI (`cmd/deadletter`) to drive these manually.
 
 **Why a separate list:** keeps failed jobs out of the pending queue so workers never waste cycles retrying something already known to be permanently broken; separates "peek" operations from "mutate" operations so debugging never has side effects.
-
-## Roadmap (not yet built)
-
-- **Step 6** — Scheduled/delayed jobs via a Redis sorted set (score = run-at timestamp), replacing the in-memory retry delay with something crash-safe
-- **Step 7** — Postgres persistence layer for job history/audit trail alongside the Redis hot queue
-- **Step 8** — Observability: queue depth, processing time, failure rate metrics
-- **Step 9** — Graceful shutdown: draining in-flight jobs cleanly on SIGTERM
-- **Step 10** — (Stretch) distributing across multiple worker nodes with leader election or sharded queues
 
 ## Running it locally
 
@@ -83,3 +81,5 @@ go run ./cmd/deadletter -action=purge
 - Redis (local or Docker)
 - `github.com/redis/go-redis/v9`
 - `github.com/google/uuid`
+
+> README.md is ai-generated
