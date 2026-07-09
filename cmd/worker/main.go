@@ -2,37 +2,42 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/harshalvk/jobqueue"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
-// func sendEmailHandler(ctx context.Context, job *jobqueue.Job) error {
-// 	var payload struct {
-// 		To string `json:"to"`
-// 	}
-// 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
-// 		return err
-// 	}
-// 	fmt.Printf("sending email to %s (job %s)\n", payload.To, job.ID)
-// 	return nil
-// }
-
-// simulated version to fail a job
 func sendEmailHandler(ctx context.Context, job *jobqueue.Job) error {
-	return fmt.Errorf("simulated failure")
+	var payload struct {
+		To string `json:"to"`
+	}
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		return err
+	}
+	fmt.Printf("sending email to %s (job %s)\n", payload.To, job.ID)
+	return nil
 }
 
+// simulated version to fail a job
+// func sendEmailHandler(ctx context.Context, job *jobqueue.Job) error {
+// 	return fmt.Errorf("simulated failure")
+// }
+
 func main() {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 	queue := jobqueue.NewQueue(rdb)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	db, error := pgxpool.New(ctx, "postgres://postgres:postgres@localhost:5432/postgres")
 	if error != nil {
@@ -43,6 +48,31 @@ func main() {
 
 	pool := jobqueue.NewWorkerPool(queue, store, 5) // 5 concurrent workers
 	pool.RegisterHandler("send_email", sendEmailHandler)
+
+	go func ()  {			
+		http.Handle("/metrics", promhttp.Handler())
+		log.Println("metrics server listening on :2112/metrics")
+		if err := http.ListenAndServe(":2112", nil); err != nil {
+			log.Printf("metrics server error: %v", err)
+		}
+	}()
+
+	go func ()  {				
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <- ctx.Done():
+				return
+			case <- ticker.C:
+				depth, err := queue.Depth(ctx)
+				if err != nil {
+					continue
+				}
+				jobqueue.QueueDepth.Set(float64(depth))
+			}
+		}
+	}()
 
 	fmt.Println("worker pool started, waiting for jobs...")
 	pool.Start(ctx)
