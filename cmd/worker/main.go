@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -16,21 +15,23 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func sendEmailHandler(ctx context.Context, job *jobqueue.Job) error {
-	var payload struct {
-		To string `json:"to"`
-	}
-	if err := json.Unmarshal(job.Payload, &payload); err != nil {
-		return err
-	}
-	fmt.Printf("sending email to %s (job %s)\n", payload.To, job.ID)
-	return nil
-}
+// func sendEmailHandler(ctx context.Context, job *jobqueue.Job) error {
+// 	var payload struct {
+// 		To string `json:"to"`
+// 	}
+// 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+// 		return err
+// 	}
+// 	fmt.Printf("sending email to %s (job %s)\n", payload.To, job.ID)
+// 	return nil
+// }
 
 // simulated version to fail a job
-// func sendEmailHandler(ctx context.Context, job *jobqueue.Job) error {
-// 	return fmt.Errorf("simulated failure")
-// }
+func sendEmailHandler(ctx context.Context, job *jobqueue.Job) error {
+	time.Sleep(5 * time.Second)
+	fmt.Printf("email send for job %s\n", job.ID)
+	return nil
+}
 
 func main() {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -75,6 +76,6 @@ func main() {
 	}()
 
 	fmt.Println("worker pool started, waiting for jobs...")
-	pool.Start(ctx)
+	pool.Start(ctx, 30*time.Second)
 	fmt.Println("worker pool stopped")
 } 
