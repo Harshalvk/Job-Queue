@@ -28,64 +28,59 @@ jobqueue/
 │   ├── producer/       # CLI to enqueue test jobs
 │   ├── worker/         # runs the worker pool, processes jobs
 │   └── deadletter/     # CLI to list/requeue/purge dead-lettered jobs
+│   └── scheduler/      # reshedules a dead-lettered job
 └── README.md
 ```
 
 ## Supported features
-
-### 1. Core job model
-
-UUID-based `Job` struct with `Type`, `Payload` (raw JSON, so the queue stays agnostic to job contents), `Status`, `Attempts`/`MaxAttempts`, timestamps, and `LastError`. This struct is the shared contract every other component (queue, worker pool, retries, dead-letter) builds against, so they never drift out of sync with each other.
-
-**Why UUIDs:** no coordination needed between multiple producers or worker nodes — any process can generate a valid job ID locally.
-
-### 2. Redis-backed queue
-
-`Enqueue`/`Dequeue` implemented using Redis `LPUSH`/`BRPOP` against a list. `BRPOP` blocks until a job is available — no polling loop burning CPU while the queue is empty.
-
-**Why a list and not Streams (yet):** starting with the simplest primitive that works means understanding exactly what's traded away before reaching for something more complex like Redis Streams (which offer consumer groups and replay — relevant once this goes multi-node).
-
-### 3. Worker pool
-
-A fixed number of goroutines (`concurrency`), each looping forever, pulling jobs and routing them to a registered `Handler` based on `job.Type`. Uses `context.Context` + `sync.WaitGroup` for coordinated shutdown, and a 5-second `BRPOP` timeout (rather than blocking forever) so workers can periodically check if they've been asked to stop.
-
-**Why a fixed pool and not one goroutine per job:** caps how much work happens in parallel, protecting downstream resources (databases, external APIs) from being overwhelmed if a burst of jobs land at once.
-
-### 4. Retries with exponential backoff
-
-On handler failure, `Attempts` increments and the job is either requeued after a backoff delay (`2^attempts` seconds, capped at 30s) or moved to the dead-letter queue if `MaxAttempts` is exhausted.
-
-**Known limitation (called out intentionally):** the current retry delay uses an in-memory goroutine (`time.After`), which means a crashed worker process loses any pending retries. This gets fixed properly using a Redis sorted set for durable, crash-safe scheduling (see roadmap).
-
-### 5. Dead-letter queue
-
-Permanently-failed jobs move to a separate Redis list (`jobqueue:dead_letter`) instead of just being logged and dropped. Includes `ListDeadLetter` (inspect without removing), `RequeueDeadLetter` (reset attempts and retry), and `PurgeDeadLetter` (delete all), plus a small CLI (`cmd/deadletter`) to drive these manually.
-
-**Why a separate list:** keeps failed jobs out of the pending queue so workers never waste cycles retrying something already known to be permanently broken; separates "peek" operations from "mutate" operations so debugging never has side effects.
-
+ 
+- **Core job model** — UUID-based `Job` struct (`Type`, raw JSON `Payload`, `Status`, `Attempts`/`MaxAttempts`, timestamps, `LastError`) that every other component builds against.
+- **Redis-backed queue** — `Enqueue`/`Dequeue` via `LPUSH`/`BRPOP`. Blocking pop means no polling loop burning CPU.
+- **Worker pool** — fixed number of goroutines pulling and routing jobs to registered `Handler`s by `job.Type`, capping parallelism to protect downstream resources.
+- **Retries with exponential backoff** — failed jobs are requeued with `2^attempts` backoff (capped at 30s) or dead-lettered once `MaxAttempts` is hit.
+- **Dead-letter queue** — permanently-failed jobs land in a separate Redis list, inspectable/requeueable/purgeable via `cmd/deadletter`.
+- **Durable delayed jobs** — retries and scheduled jobs live in a Redis sorted set (score = run-at timestamp), promoted by a standalone `cmd/scheduler` process. Survives worker restarts, unlike an in-memory timer.
+- **Postgres persistence** — every job's lifecycle is written to a `job_history` table for durable, queryable audit history alongside Redis's live queue state.
+- **Metrics** — Prometheus counters/histogram/gauge on `/metrics`: jobs processed (by type + outcome), handler duration, pending queue depth.
+- **Graceful shutdown** — workers stop picking up new jobs on SIGTERM/SIGINT but let an in-flight job finish, bounded by a shutdown timeout.
+- **Multi-node ready** — `BRPOP` already distributes work safely across multiple worker processes with no extra code; workers are tagged with a `nodeID` for log attribution across machines. Leader election and queue sharding are known, intentionally unbuilt next steps.
 ## Running it locally
 
 ```bash
-# start redis
-docker run -d -p 6379:6379 redis
+# start redis + postgres
+docker compose up -d
 
-# terminal 1: start the worker pool
+# run schema against postgres (copy + exec avoids psql needing to be installed locally)
+docker cp schema.sql jobqueue-postgres:/schema.sql
+docker exec -it jobqueue-postgres psql -U jobqueue -d jobqueue -f /schema.sql
+
+# terminal 1: start the worker pool (serves metrics on :2112/metrics)
 go run ./cmd/worker
 
-# terminal 2: enqueue a test job
+# terminal 2: start the scheduler (promotes due delayed/retry jobs)
+go run ./cmd/scheduler
+
+# terminal 3: enqueue a test job
 go run ./cmd/producer
 
 # inspect dead-lettered jobs
 go run ./cmd/deadletter -action=list
 go run ./cmd/deadletter -action=requeue -id=<job-uuid>
 go run ./cmd/deadletter -action=purge
+
+# stop everything (keeps data)
+docker compose down
+
+# stop and wipe all data
+docker compose down -v
 ```
 
 ## Requirements
 
 - Go 1.21+
-- Redis (local or Docker)
-- `github.com/redis/go-redis/v9`
-- `github.com/google/uuid`
-
+- Docker + Docker Compose (Redis + Postgres)
+- github.com/redis/go-redis/v9
+- github.com/google/uuid
+- github.com/jackc/pgx/v5/pgxpool
+- github.com/prometheus/client_golang
 > README.md is ai-generated
