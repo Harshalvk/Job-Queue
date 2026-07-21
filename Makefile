@@ -1,4 +1,4 @@
-.PHONY: help build test lint fmt vet run-worker run-producer run-scheduler run-deadletter docker-up docker-down docker-logs clean
+.PHONY: help build test lint fmt vet migrate run-worker run-producer run-scheduler run-deadletter docker-up docker-down docker-logs clean
 
 build:
 	go build -o bin/producer.exe ./cmd/producer
@@ -17,6 +17,10 @@ fmt:
 
 vet:
 	go vet ./...
+
+migrate:
+	docker cp migrations/0001_init.sql jobqueue-postgres:/0001_init.sql
+	docker exec -it jobqueue-postgres psql -U jobqueue -d jobqueue -f /0001_init.sql
 
 run-worker:
 	go run ./cmd/worker
