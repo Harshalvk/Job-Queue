@@ -8,7 +8,7 @@ pre-commit:
 
     lint:
       glob: "*.go"
-      run: golangci-lint run --new-from-rev=HEAD {staged_files}
+      run: golangci-lint run --new-from-rev=HEAD ./...
 
     vet:
       glob: "*.go"
