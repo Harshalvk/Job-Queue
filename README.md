@@ -1,5 +1,4 @@
 # Job Queue ![visitors](https://visitor-badge.laobi.icu/badge?page_id=harshalvk.job-queue&left_text=visitors&left_color=%234f4f4f&right_color=%23c48312)
-# jobqueue
 [![CI](https://github.com/harshalvk/jobqueue/actions/workflows/ci.yml/badge.svg)](https://github.com/harshalvk/Job-Queue/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/harshalvk/jobqueue)](https://goreportcard.com/report/github.com/harshalvk/jobqueue)
 [![Go Reference](https://pkg.go.dev/badge/github.com/harshalvk/jobqueue.svg)](https://pkg.go.dev/github.com/harshalvk/jobqueue)
