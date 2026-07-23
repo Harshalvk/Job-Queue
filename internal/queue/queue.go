@@ -5,6 +5,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -18,6 +19,12 @@ const (
 	delayedKey    = "jobqueue:delayed"
 )
 
+const (
+	waitingKey            = "jobqueue:waiting"
+	waitingCountKeyPrefix = "jobqueue:waiting:count:"
+	dependentsKeyPrefix   = "jobqueue:dependents:"
+)
+
 var pendingKeys = map[job.Priority]string{
 	job.PriorityHigh:    "jobqueue:pending:high",
 	job.PriorityDefault: "jobqueue:pending:default",
@@ -27,6 +34,9 @@ var pendingKeys = map[job.Priority]string{
 // dequeueOrder defines the prioiryt check order - high checked firs,
 // then low last
 var dequeueOrder = []job.Priority{job.PriorityHigh, job.PriorityDefault, job.PriorityLow}
+
+func waitingCountKey(jobID string) string { return waitingCountKeyPrefix + jobID }
+func dependentsKey(jobID string) string   { return dependentsKeyPrefix + jobID }
 
 func keyFor(p job.Priority) string {
 	if key, ok := pendingKeys[p]; ok {
@@ -222,4 +232,129 @@ func (q *Queue) TotalDepth(ctx context.Context) (int64, error) {
 		total += n
 	}
 	return total, nil
+}
+
+// EnqueueWithDependencies enqueues j immediately if it has no dependencies,
+// or parks it in the waiting set until every job in j.DependsOn has completed
+func (q *Queue) EnqueueWithDependencies(ctx context.Context, j *job.Job) error {
+	if len(j.DependsOn) == 0 {
+		return q.Enqueue(ctx, j)
+	}
+
+	data, err := json.Marshal(j)
+	if err != nil {
+		return fmt.Errorf("marshal job: %w", err)
+	}
+
+	pipe := q.rdb.TxPipeline()
+	pipe.HSet(ctx, waitingKey, j.ID, data)
+	pipe.Set(ctx, waitingCountKey(j.ID), len(j.DependsOn), 0)
+	for _, depID := range j.DependsOn {
+		pipe.SAdd(ctx, dependentsKey(depID), j.ID)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("enqueue with dependencies: %w", err)
+	}
+	return nil
+}
+
+// ResolveDependents is called when completedJobID finishes successfully.
+// it decrements the waiting-dependency count for every job depending on
+// it, and enqueues any that now have zero outstanding, dependencies
+func (q *Queue) ResolveDependents(ctx context.Context, completedJobID string) error {
+	depKey := dependentsKey(completedJobID)
+	depnedntIDs, err := q.rdb.SMembers(ctx, depKey).Result()
+	if err != nil {
+		return fmt.Errorf("get dependents of %s: %w", completedJobID, err)
+	}
+
+	for _, depJobID := range depnedntIDs {
+		remaining, err := q.rdb.Decr(ctx, waitingCountKey(depJobID)).Result()
+		if err != nil {
+			return fmt.Errorf("decrement waiting count for %s: %w", depJobID, err)
+		}
+		if remaining > 0 {
+			continue
+		}
+
+		data, err := q.rdb.HGet(ctx, waitingKey, depJobID).Result()
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				continue // already promoted (e.g. by a concurrent resolve)
+			}
+			return fmt.Errorf("get waiting job %s: %w", depJobID, err)
+		}
+
+		var readyJob job.Job
+		if err := json.Unmarshal([]byte(data), &readyJob); err != nil {
+			return fmt.Errorf("unmarshal waiting job %s: %w", depJobID, err)
+		}
+
+		if err := q.Enqueue(ctx, &readyJob); err != nil {
+			return fmt.Errorf("enqueue ready job %s: %w", depJobID, err)
+		}
+
+		cleanup := q.rdb.TxPipeline()
+		cleanup.HDel(ctx, waitingKey, depJobID)
+		cleanup.Del(ctx, waitingCountKey(depJobID))
+		if _, err := cleanup.Exec(ctx); err != nil {
+			return fmt.Errorf("cleanup waiting state for %s: %w", depJobID, err)
+		}
+	}
+
+	return q.rdb.Del(ctx, depKey).Err()
+}
+
+// CascadeFailDependents moves every job waiting on failedJobID - directly
+// or transitively - to the dead-letter queue, since a permanently failed
+// dependency means they can never legitimately run
+func (q *Queue) CascadeFailDependents(ctx context.Context, failedJobID string) error {
+	toVisit := []string{failedJobID}
+
+	for len(toVisit) > 0 {
+		id := toVisit[0]
+		toVisit = toVisit[1:]
+
+		depKey := dependentsKey(id)
+		dependentIDs, err := q.rdb.SMembers(ctx, depKey).Result()
+		if err != nil {
+			return fmt.Errorf("get dependents of %s: %w", id, err)
+		}
+
+		for _, depJobID := range dependentIDs {
+			data, err := q.rdb.HGet(ctx, waitingKey, depJobID).Result()
+			if err != nil {
+				if errors.Is(err, redis.Nil) {
+					continue
+				}
+				return fmt.Errorf("get waiting job %s: %w", depJobID, err)
+			}
+
+			var waitingJob job.Job
+			if err := json.Unmarshal([]byte(data), &waitingJob); err != nil {
+				return fmt.Errorf("unmarshal waiting job %s: %w", depJobID, err)
+			}
+			waitingJob.Status = job.StatusDeadLetter
+			waitingJob.LastError = fmt.Sprintf("upstream dependency %s failed permanently", id)
+
+			if err := q.MoveToDeadLetter(ctx, &waitingJob); err != nil {
+				return fmt.Errorf("move %s to dead letter: %w", depJobID, err)
+			}
+
+			cleanup := q.rdb.TxPipeline()
+			cleanup.HDel(ctx, waitingKey, depJobID)
+			cleanup.Del(ctx, waitingCountKey(depJobID))
+			if _, err := cleanup.Exec(ctx); err != nil {
+				return fmt.Errorf("cleanup waiting state for %s: %w", depJobID, err)
+			}
+
+			toVisit = append(toVisit, depJobID) // cascade further down the chain
+		}
+
+		if err := q.rdb.Del(ctx, depKey).Err(); err != nil {
+			return fmt.Errorf("cleanup dependencies key for %s: %w", id, err)
+		}
+	}
+
+	return nil
 }

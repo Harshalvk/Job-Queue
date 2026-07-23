@@ -142,3 +142,48 @@ func TestDequeue_PrioritizesHighOverDefault(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, highJob.ID, got.ID)
 }
+
+func TestDependencies_ResolveOnCompletion(t *testing.T) {
+	rdb := setupRedis(t)
+	q := queue.New(rdb)
+	ctx := context.Background()
+
+	payload, err := json.Marshal(map[string]string{"to": "test@example.com"})
+	require.NoError(t, err)
+
+	upstream := job.New("resize_image", payload, 3)
+	downstream := job.NewWithDependencies("send_email", payload, 3, []string{upstream.ID})
+
+	require.NoError(t, q.EnqueueWithDependencies(ctx, downstream))
+
+	// downstream should NOT be runnable yet - nothing in pending
+	_, err = q.Dequeue(ctx, 1*time.Second)
+	assert.ErrorIs(t, err, redis.Nil)
+
+	require.NoError(t, q.ResolveDependents(ctx, upstream.ID))
+
+	got, err := q.Dequeue(ctx, 2*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, downstream.ID, got.ID)
+}
+
+func TestDependencies_CascadeFailOnUpstreamDeadLetter(t *testing.T) {
+	rdb := setupRedis(t)
+	q := queue.New(rdb)
+	ctx := context.Background()
+
+	payload, err := json.Marshal(map[string]string{"to": "test@example.com"})
+	require.NoError(t, err)
+
+	upstream := job.New("resize_image", payload, 3)
+	downstream := job.NewWithDependencies("send_email", payload, 3, []string{upstream.ID})
+
+	require.NoError(t, q.EnqueueWithDependencies(ctx, downstream))
+	require.NoError(t, q.CascadeFailDependents(ctx, upstream.ID))
+
+	dead, err := q.ListDeadLetter(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, dead, 1)
+	assert.Equal(t, downstream.ID, dead[0].ID)
+	assert.Contains(t, dead[0].LastError, upstream.ID)
+}

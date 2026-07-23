@@ -109,8 +109,11 @@ func (wp *Pool) process(ctx context.Context, workerID int, j *job.Job) {
 		if err := wp.store.RecordStatus(ctx, j); err != nil {
 			log.Printf("job %s: failed to recrod completed status: %v", j.ID, err)
 		}
+		if err := wp.queue.ResolveDependents(ctx, j.ID); err != nil {
+			log.Printf("job %s: failed to resolve dependents: %v", j.ID, err)
+		}
 
-		log.Printf("worker %d: job %s completed", workerID, j.ID)
+		log.Printf("[%s] worker %d: job %s completed", wp.nodeID, workerID, j.ID)
 		return
 	}
 
@@ -164,6 +167,9 @@ func (wp *Pool) moveToDeadLetter(ctx context.Context, j *job.Job) {
 	metrics.JobsProcessed.WithLabelValues(j.Type, "dead_letter").Inc()
 	if err := wp.store.RecordStatus(ctx, j); err != nil {
 		log.Printf("job %s: failed to record dead-letter status: %v", j.ID, err)
+	}
+	if err := wp.queue.CascadeFailDependents(ctx, j.ID); err != nil {
+		log.Printf("job %s: failed to cascade-fail dependents: %v", j.ID, err)
 	}
 
 	log.Printf("job %s: moved to dead-letter queue after %d attempts", j.ID, j.Attempts)

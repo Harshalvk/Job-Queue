@@ -44,6 +44,7 @@ type Job struct {
 	CreatedAt   time.Time       `json:"created_at"`
 	RunAt       time.Time       `json:"run_at"`
 	LastError   string          `json:"last_error,omitempty"`
+	DependsOn   []string        `json:"depends_on,omitempty"`
 }
 
 // New creates a new Job with a generated UUID and pending status.
@@ -65,5 +66,13 @@ func New(jobType string, payload json.RawMessage, maxAttempts int) *Job {
 func NewWithPriority(jobType string, payload json.RawMessage, maxAttempts int, priority Priority) *Job {
 	j := New(jobType, payload, maxAttempts)
 	j.Priority = priority
+	return j
+}
+
+// NewWithDependencies creates a new Job that only becomes eligible to run
+// once every job id in dependsOn has completed successfully
+func NewWithDependencies(jobType string, payload json.RawMessage, maxAttempts int, dependsOn []string) *Job {
+	j := New(jobType, payload, maxAttempts)
+	j.DependsOn = dependsOn
 	return j
 }
