@@ -1,0 +1,10 @@
+services:
+  devcontainer:
+    image: mcr.microsoft.com/devcontainers/base:ubuntu-22.04
+    volumes:
+      - ../..:/workspace:cached
+    command: sleep infinity
+    depends_on:
+      - redis
+      - postgres
+    network_mode: service:redis

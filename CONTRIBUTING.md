@@ -52,3 +52,10 @@ Significant design decisions are recorded in [`docs/adr/`](docs/adr/README.md) a
 - `internal/metrics` — Prometheus metrics definitions
 - `internal/worker` — worker pool, retry/backoff, dead-letter logic
 - `cmd/*` — entrypoints; thin wiring only, no business logic
+
+## Quick start (devcontainer)
+
+If you use VS Code or GitHub Codespaces, you don't need to install Go, Redis, Postgres, or any of the tooling below manually — open this repo in a devcontainer (`Ctrl+Shift+P` → "Dev Containers: Reopen in Container" in VS Code, or "Create codespace" on GitHub) and everything is pre-configured: Go 1.22, golangci-lint, lefthook (pre-commit hooks installed automatically), govulncheck, gosec, and live Redis/Postgres instances.
+
+## Manual setup
+(existing prerequisites/setup content stays below this, for anyone not using the devcontainer)

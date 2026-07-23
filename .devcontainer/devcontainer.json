@@ -1,0 +1,40 @@
+{
+  "name": "Kairos",
+  "dockerComposeFile": ["../docker-compose.yml", "docker-compose.override.yml"],
+  "service": "devcontainer",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.22"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "editorconfig.editorconfig",
+        "redhat.vscode-yaml",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "go.formatTool": "goimports",
+        "editor.formatOnSave": true,
+        "go.lintTool": "golangci-lint",
+        "go.lintOnSave": "package"
+      }
+    }
+  },
+
+  "postCreateCommand": "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && go install github.com/evilmartians/lefthook@latest && go install golang.org/x/vuln/cmd/govulncheck@latest && go install github.com/securego/gosec/v2/cmd/gosec@latest && lefthook install && go mod download",
+
+  "forwardPorts": [6379, 5432, 2112],
+  "portsAttributes": {
+    "6379": { "label": "Redis" },
+    "5432": { "label": "Postgres" },
+    "2112": { "label": "Metrics" }
+  }
+}
