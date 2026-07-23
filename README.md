@@ -22,6 +22,14 @@ Libraries like Sidekiq, Celery, or Asynq solve this problem well — but using t
 
 This project builds each of those pieces manually, one at a time, with the reasoning behind each design decision documented alongside the code.
 
+## Architecture
+<img width="6447" height="3411" alt="image" src="https://github.com/user-attachments/assets/af480ba5-f471-4763-9b4a-2f93a3b0664a" />
+
+- **Producer** enqueues jobs — plain, priority-tagged, dependency-linked, or idempotency-guarded.
+- **Redis** holds all live state: three priority-ordered pending lists, a delayed sorted set for retries/scheduled jobs, a dead-letter list, a waiting hash for unresolved dependencies, and idempotency claim keys.
+- **Scheduler** is a separate process whose only job is promoting due delayed jobs into pending.
+- **Worker pool** dequeues (priority-first), executes handlers, and on outcome: records history to Postgres, updates metrics, and either resolves/cascades dependent jobs or schedules a retry.
+
 ## Project structure
 
 ```
