@@ -16,6 +16,7 @@ import (
 	"github.com/harshalvk/kairos/internal/job"
 	"github.com/harshalvk/kairos/internal/metrics"
 	"github.com/harshalvk/kairos/internal/queue"
+	"github.com/harshalvk/kairos/internal/ratelimit"
 	"github.com/harshalvk/kairos/internal/store"
 	"github.com/harshalvk/kairos/internal/worker"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,6 +49,9 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 	queue := queue.New(rdb)
 
+	limiter := ratelimit.New()
+	limiter.SetLimit("send_email", 5, 10) // 5/sec sustained, burst of 10
+
 	db, err := pgxpool.New(ctx, "postgres://postgres:postgres@localhost:5432/postgres")
 	if err != nil {
 		panic(err)
@@ -64,7 +68,7 @@ func main() {
 		nodeID = hostname
 	}
 
-	pool := worker.NewWorkerPool(queue, store, 5, nodeID) // 5 concurrent workers
+	pool := worker.NewPool(queue, store, 5, nodeID, limiter) // 5 concurrent workers
 	pool.RegisterHandler("send_email", sendEmailHandler)
 
 	go func() {

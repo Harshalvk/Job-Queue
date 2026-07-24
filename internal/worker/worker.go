@@ -11,6 +11,7 @@ import (
 	"github.com/harshalvk/kairos/internal/job"
 	"github.com/harshalvk/kairos/internal/metrics"
 	"github.com/harshalvk/kairos/internal/queue"
+	"github.com/harshalvk/kairos/internal/ratelimit"
 	"github.com/harshalvk/kairos/internal/store"
 )
 
@@ -25,17 +26,20 @@ type Pool struct {
 	handlers    map[string]Handler
 	concurrency int
 	nodeID      string
+	limiter     *ratelimit.Limiter
 }
 
-// NewWorkerPool creates a WorkerPool with the given concurrency and node
-// identifier (used for log attribution across multiple worker processes).
-func NewWorkerPool(queue *queue.Queue, store *store.Store, concurrency int, nodeID string) *Pool {
+// NewPool creates a worker pool with the given concurrency, node
+// identifier, and rate limiter (pass ratelimit.New() with no configured limits
+// if rate limiting is not needed
+func NewPool(queue *queue.Queue, store *store.Store, concurrency int, nodeID string, limiter *ratelimit.Limiter) *Pool {
 	return &Pool{
 		queue:       queue,
 		store:       store,
 		handlers:    make(map[string]Handler),
 		concurrency: concurrency,
 		nodeID:      nodeID,
+		limiter:     limiter,
 	}
 }
 
@@ -93,7 +97,17 @@ func (wp *Pool) runWorker(ctx context.Context, id int, wg *sync.WaitGroup) {
 func (wp *Pool) process(ctx context.Context, workerID int, j *job.Job) {
 	handler, ok := wp.handlers[j.Type]
 	if !ok {
-		log.Printf("worker %d: no handler for job type %q, skipping", workerID, j.Type)
+		log.Printf("[%s] worker %d: no handler for job type %q, skipping", wp.nodeID, workerID, j.Type)
+		return
+	}
+
+	if err := wp.limiter.Wait(ctx, j.Type); err != nil {
+		// ctx was cancled while watiting for a rate limit token - likely
+		// shutdown in progress. re-queue the job rather than dropping it
+		log.Printf("[%s] worker [%d]: rate limit wait canclled for job %s: %v", wp.nodeID, workerID, j.ID, err)
+		if reErr := wp.queue.Enqueue(ctx, j); reErr != nil {
+			log.Printf("job %s: failed to re-enqueue after canclled rate-limit wait: %v", j.ID, reErr)
+		}
 		return
 	}
 
