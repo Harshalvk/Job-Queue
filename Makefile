@@ -34,6 +34,12 @@ run-scheduler:
 run-deadletter:
 	go run ./cmd/deadletter $(ARGS)
 
+run-cron:
+	go run ./cmd/cron
+
+seed-recurring:
+	go run ./cmd/seed-recurring
+
 docker-up:
 	docker compose up -d
 
