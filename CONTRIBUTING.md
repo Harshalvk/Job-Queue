@@ -59,3 +59,11 @@ If you use VS Code or GitHub Codespaces, you don't need to install Go, Redis, Po
 
 ## Manual setup
 (existing prerequisites/setup content stays below this, for anyone not using the devcontainer)
+
+## Keeping local and CI tooling in sync
+
+If you update Go or golangci-lint locally, update the matching version
+in `.github/workflows/ci.yml` in the same commit. Local and CI drifting
+apart on tool versions is the most common source of "works locally,
+fails in CI" — check `go version` and `golangci-lint --version` against
+what's pinned in ci.yml before troubleshooting anything else.
