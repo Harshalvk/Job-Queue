@@ -14,7 +14,7 @@ import (
 
 func main() {
 	ctx := context.Background()
-pgDSN := os.Getenv("POSTGRES_DSN")
+	pgDSN := os.Getenv("POSTGRES_DSN")
 	if pgDSN == "" {
 		pgDSN = "postgres://kairos:kairos@localhost:5432/kairos"
 	}

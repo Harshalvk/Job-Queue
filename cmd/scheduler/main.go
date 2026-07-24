@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-		redisAddr := os.Getenv("REDIS_ADDR")
+	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
 		redisAddr = "localhost:6379"
 	}
