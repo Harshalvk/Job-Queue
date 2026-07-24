@@ -76,3 +76,14 @@ docker-up: ## Start redis, postgres, worker, prometheus, and grafana
 grafana: ## Open Grafana in the browser (admin/kairos, or anonymous viewer access)
 	@echo "Grafana: http://localhost:3000"
 	@echo "Prometheus: http://localhost:9090"
+
+bench: ## Run all benchmarks
+	go test -bench=. -benchmem ./...
+
+bench-save: ## Run benchmarks and save output for comparison (see `make bench-compare`)
+	go test -bench=. -benchmem ./... > bench_baseline.txt
+
+bench-compare: ## Compare current benchmarks against the saved baseline
+	go test -bench=. -benchmem ./... > bench_current.txt
+	go install golang.org/x/perf/cmd/benchstat@latest
+	benchstat bench_baseline.txt bench_current.txt

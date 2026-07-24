@@ -1,3 +1,6 @@
 /dist
 /bin
 .env
+
+bench_baseline.txt
+bench_current.txt
